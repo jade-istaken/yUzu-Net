@@ -170,7 +170,7 @@ class YUzuNetLoss(nn.Module):
 
         # Segmentation Loss (Dice)
         loss_seg = self.dice_loss(seg_pred, seg_target)
-        print(f"Det: {loss_det:.3f} | Seg: {loss_seg.item():.3f}")
+        #print(f"Det: {loss_det:.3f} | Seg: {loss_seg.item():.3f}")
 
         return self.lambda_det * loss_det + self.lambda_seg * loss_seg
 
