@@ -95,13 +95,13 @@ class UNet(nn.Module):
         if self.verbose: print(f"Output: {out.shape}")
         return out
 
-def print_dims():
-    model = UNet(verbose=True)
-    model.eval()
-    tensor = torch.rand(1,3,512,512)
-    model(tensor)
+    def dummy_pass(self):
+        tensor = torch.rand(1,3,512,512)
+        self.forward(tensor)
+
 
 if __name__ == '__main__':
     print("This is just a model definition file! It doesn't do much on it's own :( ")
     print("Have this readout of the model's dimensions though! :D")
-    print_dims()
+    model = UNet(verbose=True)
+    model.dummy_pass()
