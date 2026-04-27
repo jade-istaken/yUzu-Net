@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 def double_convolution(in_channels: int, out_channels: int):
   #this represents a single "block" of the U-Net architecture. padding is added
-  #so that the output of the network is still 572x572
+  #so that the output of the network is still 576x576
   conv = nn.Sequential(
       nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
       nn.ReLU(inplace=True),
@@ -14,8 +14,9 @@ def double_convolution(in_channels: int, out_channels: int):
   return conv
 
 class UNet(nn.Module):
-    def __init__(self, num_classes=1):
+    def __init__(self, num_classes=1, verbose=False):
         super(UNet, self).__init__()
+        self.verbose = verbose
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
         # Contracting path.
         # Each convolution is applied twice.
@@ -28,15 +29,13 @@ class UNet(nn.Module):
         self.up_transpose_1 = nn.ConvTranspose2d(
             in_channels=1024, out_channels=512,
             kernel_size=2,
-            stride=2,
-            output_padding=1) # Added output_padding so that the dimensions return properly
+            stride=2,) # Removed output padding because There's no real need to stick to 572x572 when it just makes things kind of weird.
         # Below, `in_channels` again becomes 1024 as we are concatenating.
         self.up_convolution_1 = double_convolution(1024, 512)
         self.up_transpose_2 = nn.ConvTranspose2d(
             in_channels=512, out_channels=256,
             kernel_size=2,
-            stride=2,
-            output_padding=1) # Added output_padding
+            stride=2,)
         self.up_convolution_2 = double_convolution(512, 256)
         self.up_transpose_3 = nn.ConvTranspose2d(
             in_channels=256, out_channels=128,
@@ -54,38 +53,55 @@ class UNet(nn.Module):
             kernel_size=1
         )
     def forward(self, x):
+        if self.verbose: print(f"Input: {x.shape}")
         down_1 = self.down_convolution_1(x)
-        #print(down_1.shape)
+        if self.verbose: print("Encoder Path:")
+        if self.verbose: print(f"Double Convolution 1: {down_1.shape}")
         down_2 = self.max_pool2d(down_1)
-        #print(down_2.shape)
+        if self.verbose: print(f"Max-Pool 1: {down_2.shape}")
         down_3 = self.down_convolution_2(down_2)
-        #print(down_3.shape)
+        if self.verbose: print(f"Double Convolution 2: {down_3.shape}")
         down_4 = self.max_pool2d(down_3)
-        #print(down_4.shape)
+        if self.verbose: print(f"Max-Pool 2: {down_4.shape}")
         down_5 = self.down_convolution_3(down_4)
-        #print(down_5.shape)
+        if self.verbose: print(f"Double Convolution 3: {down_5.shape}")
         down_6 = self.max_pool2d(down_5)
-        #print(down_6.shape)
+        if self.verbose: print(f"Max-Pool 3: {down_6.shape}")
         down_7 = self.down_convolution_4(down_6)
-        #print(down_7.shape)
+        if self.verbose: print(f"Double Convolution 4: {down_7.shape}")
         down_8 = self.max_pool2d(down_7)
-        #print(down_8.shape)
+        if self.verbose: print(f"Max-Pool 4: {down_8.shape}")
         down_9 = self.down_convolution_5(down_8)
-        #print(down_9.shape)
-        # *** DO NOT APPLY MAX POOL TO down_9 ***
+        if self.verbose: print(f"Double Convolution 5: {down_9.shape}")
 
+        if self.verbose: print("\nDecoder Pass:")
         up_1 = self.up_transpose_1(down_9)
+        if self.verbose: print(f"Up-Conv 1: {up_1.shape}")
         x = self.up_convolution_1(torch.cat([down_7, up_1], 1))
+        if self.verbose: print(f"Cat + Double Conv 1: {x.shape}")
         up_2 = self.up_transpose_2(x)
+        if self.verbose: print(f"Up-Conv 2: {up_2.shape}")
         x = self.up_convolution_2(torch.cat([down_5, up_2], 1))
+        if self.verbose: print(f"Cat + Double Conv 2: {x.shape}")
         up_3 = self.up_transpose_3(x)
+        if self.verbose: print(f"Up-Conv 3: {up_3.shape}")
         x = self.up_convolution_3(torch.cat([down_3, up_3], 1))
+        if self.verbose: print(f"Cat + Double Conv 3: {x.shape}")
         up_4 = self.up_transpose_4(x)
+        if self.verbose: print(f"Up-Conv 4: {up_4.shape}")
         x = self.up_convolution_4(torch.cat([down_1, up_4], 1))
+        if self.verbose: print(f"Cat + Double Conv 4: {x.shape}")
         out = self.out(x)
+        if self.verbose: print(f"Output: {out.shape}")
         return out
 
+def print_dims():
+    model = UNet(verbose=True)
+    model.eval()
+    tensor = torch.rand(1,3,512,512)
+    model(tensor)
 
 if __name__ == '__main__':
-    print("This is just a model definition file! It can't be run on it's own :( ")
-
+    print("This is just a model definition file! It doesn't do much on it's own :( ")
+    print("Have this readout of the model's dimensions though! :D")
+    print_dims()
