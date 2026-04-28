@@ -6,6 +6,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.ops as ops
 import cv2
+import matplotlib.pyplot as plt
+import torchvision.transforms.functional as TF
+
+import metrics
 
 
 class YUzuNetDataset(Dataset):
@@ -174,6 +178,44 @@ class YUzuNetLoss(nn.Module):
 
         return self.lambda_det * loss_det + self.lambda_seg * loss_seg
 
+def visualize_preds(img, det_preds, stride=16, conf_thresh=0.25):
+    device = img.device
+    B, _, H, W = det_preds[1].shape  # P4 scale
+    pred = det_preds[1][0]  # First image
+
+    pred_xy = torch.sigmoid(pred[:2]) * 2.0 - 0.5
+    pred_wh = torch.sigmoid(pred[2:4]) * 4.0
+    pred_conf = torch.sigmoid(pred[4])
+
+    gy, gx = torch.meshgrid(
+        torch.arange(H, device=device),
+        torch.arange(W, device=device),
+        indexing='ij'
+    )
+
+    cx = (gx + pred_xy[0]) * stride
+    cy = (gy + pred_xy[1]) * stride
+    w  = pred_wh[0] * stride
+    h  = pred_wh[1] * stride
+
+    x1, y1 = cx - w/2, cy - h/2
+    x2, y2 = cx + w/2, cy + h/2
+
+    mask = pred_conf > conf_thresh
+    boxes = torch.stack([x1[mask], y1[mask], x2[mask], y2[mask]], dim=1)
+
+    # Plot (must move to CPU for matplotlib)
+    img_np = TF.to_pil_image(img[0].cpu())
+    plt.imshow(img_np)
+    ax = plt.gca()
+    for box in boxes.cpu().detach():
+        ax.add_patch(plt.Rectangle(
+            (box[0], box[1]), box[2]-box[0], box[3]-box[1],
+            edgecolor='red', facecolor='none', linewidth=2
+        ))
+    plt.axis('off')
+    plt.show()
+
 def main():
     from model import YUzuNet
 
@@ -193,7 +235,8 @@ def main():
     optimizer = torch.optim.AdamW(yuzu.parameters(), lr=1e-3, weight_decay=1e-4)
     yuzu.train()
 
-    for i in range (1,11):
+    val_metrics = {'mAP@50': [], 'precision': [], 'recall': [], 'iou': [], 'dice': []}
+    for i in range (1,100):
         for imgs, masks, boxes in dataloader:
             imgs = imgs.to(device)
             masks = masks.to(device)
@@ -204,6 +247,13 @@ def main():
             loss = criterion(det_preds,boxes, seg_pred ,masks)
             loss.backward()
             optimizer.step()
+            seg_m = metrics.seg_metrics(seg_pred, masks)
+            det_m = metrics.det_metrics(det_preds, boxes)
+            val_metrics['mAP@50'].append(det_m['mAP@50'])
+            val_metrics['precision'].append(det_m['precision'])
+            val_metrics['recall'].append(det_m['recall'])
+            val_metrics['iou'].append(seg_m['iou'])
+            val_metrics['dice'].append(seg_m['dice'])
 
 if __name__ == '__main__':
     main()
