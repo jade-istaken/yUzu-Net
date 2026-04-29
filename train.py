@@ -109,6 +109,17 @@ class YUzuNetLoss(nn.Module):
         cx, cy, w, h = boxes.unbind(-1)
         return torch.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], dim=-1)
 
+    def focal_loss(self, logits, targets, alpha=0.25, gamma=2.0):
+        """Focal loss to handle extreme foreground/background imbalance"""
+        probs = torch.sigmoid(logits)
+        ce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+        p_t = probs * targets + (1 - probs) * (1 - targets)
+        loss = ce_loss * ((1 - p_t) ** gamma)  # Down-weight easy examples
+        if alpha >= 0:
+            alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+            loss = alpha_t * loss
+        return loss.mean()
+
     def forward(self, preds, targets, seg_pred, seg_target):
         device = preds[0].device
         loss_box, loss_obj, loss_cls = 0.0, 0.0, 0.0
@@ -167,7 +178,7 @@ class YUzuNetLoss(nn.Module):
                 loss_box += (1 - iou.diag()).mean()
 
                 # Objectness & Classification
-                loss_obj += F.binary_cross_entropy_with_logits(pred_obj, obj_mask)
+                loss_obj += self.focal_loss(pred_obj, obj_mask)
                 loss_cls += F.binary_cross_entropy_with_logits(pred_cls[pos], cls_target[pos])
 
         loss_det = (loss_box + loss_obj + loss_cls) / len(self.strides)
