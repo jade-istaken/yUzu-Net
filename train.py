@@ -178,7 +178,7 @@ class YUzuNetLoss(nn.Module):
                 loss_box += (1 - iou.diag()).mean()
 
                 # Objectness & Classification
-                loss_obj += self.focal_loss(pred_obj, obj_mask)
+                loss_obj += self.focal_loss(pred_obj, obj_mask, alpha=0.10, gamma=1.0)
                 loss_cls += F.binary_cross_entropy_with_logits(pred_cls[pos], cls_target[pos])
 
         loss_det = (loss_box + loss_obj + loss_cls) / len(self.strides)
