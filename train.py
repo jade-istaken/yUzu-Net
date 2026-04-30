@@ -112,9 +112,6 @@ class YUzuNetDataset(Dataset):
             # crop back to original size
             img = TF.center_crop(img, [self.size, self.size])
             mask = TF.center_crop(mask, [self.size, self.size])
-        #debug things to ensure that the boxes are scaled/filtered properly
-        assert (boxes[:, 1:5] >= 0.0).all() and (boxes[:, 1:5] <= 1.0).all(), "Boxes out of bounds!"
-        assert (boxes[:, 3:5] > 0.01).all(), "Box w/h too small!"
         return img, mask, boxes
 
 def yuzunet_collate_fn(batch):
