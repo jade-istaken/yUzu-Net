@@ -92,16 +92,29 @@ class YUzuNetDataset(Dataset):
             mask = TF.resize(mask, [new_size, new_size], interpolation=TF.InterpolationMode.NEAREST)
 
             if len(boxes) > 0:
-                # adjust normalized w/h for scale change
-                boxes[:, 2] /= scale  # width
-                boxes[:, 3] /= scale  # height
-                # clamp to valid [0,1] range
-                boxes[:, 1:5] = torch.clamp(boxes[:, 1:5], 0.0, 1.0)
+                shift = (scale - 1.0) / 2.0
 
-        # crop back to original size
-        img = TF.center_crop(img, [self.size, self.size])
-        mask = TF.center_crop(mask, [self.size, self.size])
+                # Update normalized coordinates
+                boxes[:, 1] = boxes[:, 1] * scale - shift  # cx
+                boxes[:, 2] = boxes[:, 2] * scale - shift  # cy
+                boxes[:, 3] = boxes[:, 3] * scale  # w
+                boxes[:, 4] = boxes[:, 4] * scale  # h
 
+                # drop boxes if center is >5% outside OR box is <1% size
+                valid = (boxes[:, 1] >= -0.05) & (boxes[:, 1] <= 1.05) & \
+                        (boxes[:, 2] >= -0.05) & (boxes[:, 2] <= 1.05) & \
+                        (boxes[:, 3] > 0.01) & (boxes[:, 4] > 0.01)
+                boxes = boxes[valid]
+
+                # CLAMP TO VALID YOLO RANGE [0, 1]
+                boxes[:, 1:5] = boxes[:, 1:5].clamp(0.0, 1.0)
+
+            # crop back to original size
+            img = TF.center_crop(img, [self.size, self.size])
+            mask = TF.center_crop(mask, [self.size, self.size])
+        #debug things to ensure that the boxes are scaled/filtered properly
+        assert (boxes[:, 1:5] >= 0.0).all() and (boxes[:, 1:5] <= 1.0).all(), "Boxes out of bounds!"
+        assert (boxes[:, 3:5] > 0.01).all(), "Box w/h too small!"
         return img, mask, boxes
 
 def yuzunet_collate_fn(batch):
