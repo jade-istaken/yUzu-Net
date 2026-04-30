@@ -8,7 +8,7 @@ OPTIMAL_SCALING_TEMP = 0.845
 # segmentation metrics
 def seg_metrics(outputs, targets, threshold=0.5, eps=1e-6):
     """Helper to binarize, flatten, and compute TP/FP/FN safely per image"""
-    outputs = (torch.sigmoid(outputs / OPTIMAL_SCALING_TEMP) >= threshold).float()
+    outputs = (torch.sigmoid(outputs) >= threshold).float()
     outputs = outputs.view(outputs.size(0), -1)
     targets = targets.view(targets.size(0), -1)
 
