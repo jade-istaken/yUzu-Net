@@ -1,11 +1,14 @@
-# segmentation metrics
 
 import torch
+import torchvision.ops as ops
+import numpy as np
 
+OPTIMAL_SCALING_TEMP
 
+# segmentation metrics
 def seg_metrics(outputs, targets, threshold=0.5, eps=1e-6):
     """Helper to binarize, flatten, and compute TP/FP/FN safely per image"""
-    outputs = (outputs >= threshold).float()
+    outputs = (torch.sigmoid(outputs / temp) >= threshold).float()
     outputs = outputs.view(outputs.size(0), -1)
     targets = targets.view(targets.size(0), -1)
 
@@ -22,9 +25,7 @@ def seg_metrics(outputs, targets, threshold=0.5, eps=1e-6):
     return {'iou': float(iou_score), 'dice': float(dice_score), 'f1': float(f1_score)}
 
 
-import torch
-import torchvision.ops as ops
-import numpy as np
+
 
 
 def det_metrics(preds, targets, img_size=512, strides=None,
@@ -38,13 +39,13 @@ def det_metrics(preds, targets, img_size=512, strides=None,
     device = preds[0].device
     all_preds, all_gts = [], []
 
-    # 1. Decode predictions across all scales
+    # Decode predictions across all scales
     for stride, pred in zip(strides, preds):
         B, _, H, W = pred.shape
-        # Decode boxes (same logic as your loss function)
+        # Decode boxes (same logic as loss function)
         pred_xy = torch.sigmoid(pred[:, :2]) * 2.0 - 0.5
         pred_wh = torch.sigmoid(pred[:, 2:4]) * 4.0
-        pred_conf = torch.sigmoid(pred[:, 4:5])
+        pred_conf = torch.sigmoid(pred[:, 4:5] / temp) # apply temp scaling to objectness logits
 
         # Grid coordinates
         gy, gx = torch.meshgrid(torch.arange(H, device=device),
@@ -71,7 +72,7 @@ def det_metrics(preds, targets, img_size=512, strides=None,
     # Combine scales: [B, total_pts, 5]
     all_preds = torch.cat(all_preds, dim=1)
 
-    # 2. Filter by confidence, apply NMS per image, and collect GTs
+    # Filter by confidence, apply NMS per image, and collect GTs
     pred_boxes_list, pred_confs_list = [], []
     gt_boxes_list = []
 
@@ -98,7 +99,7 @@ def det_metrics(preds, targets, img_size=512, strides=None,
         else:
             gt_boxes_list.append(torch.zeros(0, 4))
 
-    # 3. Match predictions to GTs & build TP/FP/Conf arrays
+    # Match predictions to GTs & build TP/FP/Conf arrays
     tp, fp, conf_scores = [], [], []
     gt_count = 0
 
@@ -133,7 +134,7 @@ def det_metrics(preds, targets, img_size=512, strides=None,
 
         # Remaining unmatched GTs are False Negatives (counted via gt_count - sum(tp))
 
-    # 4. Compute Precision, Recall, and mAP@50
+    # Compute Precision, Recall, and mAP@50
     if gt_count == 0:
         return {'mAP@50': 0.0, 'precision': 0.0, 'recall': 0.0}
 
@@ -152,6 +153,7 @@ def det_metrics(preds, targets, img_size=512, strides=None,
     # Precision at threshold (using last valid recall)
     precision = prec[-1] if len(prec) > 0 else 0.0
     recall = rec[-1] if len(rec) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall)
 
     # Interpolate AP@50 (standard 11-point or full curve)
     # Full curve integration (more accurate for custom models)
@@ -161,4 +163,4 @@ def det_metrics(preds, targets, img_size=512, strides=None,
 
     ap = np.sum((rec_interp[1:] - rec_interp[:-1]) * prec_interp[1:])
 
-    return {'mAP@50': float(ap), 'precision': float(precision), 'recall': float(recall)}
+    return {'mAP@50': float(ap), 'precision': float(precision), 'recall': float(recall), 'F1' : float(f1)}
