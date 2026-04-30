@@ -3,12 +3,12 @@ import torch
 import torchvision.ops as ops
 import numpy as np
 
-OPTIMAL_SCALING_TEMP
+OPTIMAL_SCALING_TEMP = 0.845
 
 # segmentation metrics
 def seg_metrics(outputs, targets, threshold=0.5, eps=1e-6):
     """Helper to binarize, flatten, and compute TP/FP/FN safely per image"""
-    outputs = (torch.sigmoid(outputs / temp) >= threshold).float()
+    outputs = (torch.sigmoid(outputs / OPTIMAL_SCALING_TEMP) >= threshold).float()
     outputs = outputs.view(outputs.size(0), -1)
     targets = targets.view(targets.size(0), -1)
 
@@ -45,7 +45,7 @@ def det_metrics(preds, targets, img_size=512, strides=None,
         # Decode boxes (same logic as loss function)
         pred_xy = torch.sigmoid(pred[:, :2]) * 2.0 - 0.5
         pred_wh = torch.sigmoid(pred[:, 2:4]) * 4.0
-        pred_conf = torch.sigmoid(pred[:, 4:5] / temp) # apply temp scaling to objectness logits
+        pred_conf = torch.sigmoid(pred[:, 4:5] / OPTIMAL_SCALING_TEMP) # apply temp scaling to objectness logits
 
         # Grid coordinates
         gy, gx = torch.meshgrid(torch.arange(H, device=device),
@@ -153,7 +153,7 @@ def det_metrics(preds, targets, img_size=512, strides=None,
     # Precision at threshold (using last valid recall)
     precision = prec[-1] if len(prec) > 0 else 0.0
     recall = rec[-1] if len(rec) > 0 else 0.0
-    f1 = 2 * precision * recall / (precision + recall)
+    f1 = 2 * precision * recall / (precision + recall + 1e-6)
 
     # Interpolate AP@50 (standard 11-point or full curve)
     # Full curve integration (more accurate for custom models)
