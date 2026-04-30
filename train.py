@@ -8,7 +8,7 @@ import torchvision.ops as ops
 import cv2
 import matplotlib.pyplot as plt
 import torchvision.transforms.functional as TF
-
+import random
 import metrics
 
 
@@ -16,7 +16,7 @@ class YUzuNetDataset(Dataset):
     """Create a dataset for the YUzuNet instance."""
     #expects to be given a path with 3 folders, images, masks, and labels.
     #images contains the base images. masks contains png segmentation masks. labels contains yolo-formatted bounding box labels
-    def __init__(self, path, size=512, verbose=False):
+    def __init__(self, path, size=512, verbose=False, training=False):
         self.data_folder= path
         self.image_folder = os.path.join(self.data_folder, "images")
         self.mask_folder = os.path.join(self.data_folder, "masks")
@@ -35,7 +35,7 @@ class YUzuNetDataset(Dataset):
             [transforms.ToTensor(),
              transforms.Resize((self.size, self.size))
         ])
-
+        self.training = training # added training flag for help with augmentations
         self.verbose = verbose # this is a surprise tool that will help us later
 
     def __len__(self):
@@ -76,6 +76,31 @@ class YUzuNetDataset(Dataset):
         mask = torch.where(mask > 0.5, 1, 0).float() # this just REALLY clamps the mask down to make sure there's no noise from the transform or anything
 
         boxes = self._load_yolo_labels(label_path)
+
+        if self.training:
+            #only apply the random augmentations if we're in training.
+            if random.random() > 0.5:
+                img = TF.hflip(img)
+                mask = TF.hflip(mask)
+                if len(boxes) > 0:
+                    boxes[:, 1] = 1.0 - boxes[:, 1]
+
+            #scale by +/- 10%
+            scale = random.uniform(0.9, 1.1)
+            new_size = int(self.size * scale)
+            img = TF.resize(img, [new_size, new_size], interpolation=TF.InterpolationMode.BILINEAR)
+            mask = TF.resize(mask, [new_size, new_size], interpolation=TF.InterpolationMode.NEAREST)
+
+            if len(boxes) > 0:
+                # adjust normalized w/h for scale change
+                boxes[:, 2] /= scale  # width
+                boxes[:, 3] /= scale  # height
+                # clamp to valid [0,1] range
+                boxes[:, 1:5] = torch.clamp(boxes[:, 1:5], 0.0, 1.0)
+
+        # crop back to original size
+        img = TF.center_crop(img, [self.size, self.size])
+        mask = TF.center_crop(mask, [self.size, self.size])
 
         return img, mask, boxes
 
