@@ -3,7 +3,7 @@ import torch
 import torchvision.ops as ops
 import numpy as np
 
-OPTIMAL_SCALING_TEMP = 0.845
+OPTIMAL_SCALING_TEMP = 0.854
 
 # segmentation metrics
 def seg_metrics(outputs, targets, threshold=0.5, eps=1e-6):
