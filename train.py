@@ -91,6 +91,11 @@ class YUzuNetDataset(Dataset):
             img = TF.resize(img, [new_size, new_size], interpolation=TF.InterpolationMode.BILINEAR)
             mask = TF.resize(mask, [new_size, new_size], interpolation=TF.InterpolationMode.NEAREST)
 
+            #color jitter! it boosts the performance pretty well
+            img = TF.adjust_brightness(img, random.uniform(0.85, 1.15))
+            img = TF.adjust_contrast(img, random.uniform(0.85, 1.15))
+            img = TF.adjust_saturation(img, random.uniform(0.85, 1.15))
+
             if len(boxes) > 0:
                 shift = (scale - 1.0) / 2.0
 
