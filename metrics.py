@@ -2,6 +2,7 @@
 import torch
 import torchvision.ops as ops
 import numpy as np
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 OPTIMAL_SCALING_TEMP = 0.854
 
@@ -164,3 +165,67 @@ def det_metrics(preds, targets, img_size=512, strides=None,
     ap = np.sum((rec_interp[1:] - rec_interp[:-1]) * prec_interp[1:])
 
     return {'mAP@50': float(ap), 'precision': float(precision), 'recall': float(recall), 'F1' : float(f1)}
+
+
+def object_count_metrics(det_preds, gt_boxes, conf_thresh=0.21, nms_iou_thresh=0.5):
+    """
+    Calculates RMSE and MAE for the number of predicted objects vs. ground truth objects
+    Args:
+        det_preds (list): List of detection predictions (e.g., [p3, p4, p5]),
+                          where each p is a tensor of shape (B, num_anchors, 5+num_classes).
+                          The 5 elements are (x, y, w, h, confidence).
+        gt_boxes (list): List of ground truth boxes per image in the batch.
+                         Each element is a tensor of shape (N, 5) where 5 is (class_id, x, y, w, h).
+        conf_thresh (float): Confidence threshold for filtering predicted objects.
+        nms_iou_thresh (float): IoU threshold for Non-Maximum Suppression.
+    Returns:
+        dict: Dictionary containing 'rmse_count' and 'mae_count'.
+    """
+    predicted_counts = []
+    ground_truth_counts = []
+
+    for i in range(len(gt_boxes)):  # Iterate over images in the batch
+        # Ground Truth Count
+        ground_truth_counts.append(len(gt_boxes[i]))
+
+        # Predicted Count
+        batch_det_preds = [p_scale[i] for p_scale in det_preds]  # Predictions for the current image across scales
+
+        # Concatenate predictions from all scales for the current image
+        all_det_preds_for_image = torch.cat(batch_det_preds, dim=0)  # Shape: (Total_anchors, 5+num_classes)
+
+        # Filter by confidence
+        confidences = all_det_preds_for_image[:, 4].sigmoid()
+        high_conf_preds = all_det_preds_for_image[confidences > conf_thresh]
+
+        if high_conf_preds.numel() == 0:
+            predicted_counts.append(0)
+            continue
+
+        # Apply NMS
+        # high_conf_preds are (x, y, w, h, conf, class_probs...)
+        # Convert (cx, cy, w, h) to (x1, y1, x2, y2) for NMS
+        boxes_xywh = high_conf_preds[:, :4]
+        boxes_x1y1x2y2 = torch.empty_like(boxes_xywh)
+        boxes_x1y1x2y2[:, 0] = boxes_xywh[:, 0] - boxes_xywh[:, 2] / 2  # x1
+        boxes_x1y1x2y2[:, 1] = boxes_xywh[:, 1] - boxes_xywh[:, 3] / 2  # y1
+        boxes_x1y1x2y2[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2] / 2  # x2
+        boxes_x1y1x2y2[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3] / 2  # y2
+
+        scores = confidences[confidences > conf_thresh]  # Confidences corresponding to high_conf_preds
+
+        #apply nms to figure out what boxes to actually keep as part of the count
+        keep_indices = ops.nms(boxes_x1y1x2y2, scores, nms_iou_thresh)
+
+        predicted_counts.append(len(keep_indices))
+
+    if not predicted_counts or len(ground_truth_counts) == 0:
+        return {'rmse_count': 0.0, 'mae_count': 0.0}
+
+    predicted_counts_np = np.array(predicted_counts)
+    ground_truth_counts_np = np.array(ground_truth_counts)
+
+    rmse = np.sqrt(mean_squared_error(ground_truth_counts_np, predicted_counts_np))
+    mae = mean_absolute_error(ground_truth_counts_np, predicted_counts_np)
+
+    return {'rmse_count': rmse, 'mae_count': mae}
