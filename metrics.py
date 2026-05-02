@@ -4,7 +4,7 @@ import torchvision.ops as ops
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-OPTIMAL_SCALING_TEMP = 0.854
+OPTIMAL_SCALING_TEMP = 1.135 #Temp taken from full-set training
 
 # segmentation metrics
 def seg_metrics(outputs, targets, threshold=0.5, eps=1e-6):
@@ -30,7 +30,7 @@ def seg_metrics(outputs, targets, threshold=0.5, eps=1e-6):
 
 
 def det_metrics(preds, targets, img_size=512, strides=None,
-                conf_thresh=0.25, iou_thresh=0.5):
+                conf_thresh=0.25, iou_thresh=0.5, temp=OPTIMAL_SCALING_TEMP):
     """
     Computes detection metrics for single-class YOLO-style heads.
     Returns: {'mAP@50': float, 'precision': float, 'recall': float}
@@ -46,7 +46,7 @@ def det_metrics(preds, targets, img_size=512, strides=None,
         # Decode boxes (same logic as loss function)
         pred_xy = torch.sigmoid(pred[:, :2]) * 2.0 - 0.5
         pred_wh = torch.sigmoid(pred[:, 2:4]) * 4.0
-        pred_conf = torch.sigmoid(pred[:, 4:5] / OPTIMAL_SCALING_TEMP) # apply temp scaling to objectness logits
+        pred_conf = torch.sigmoid(pred[:, 4:5] / temp) # apply temp scaling to objectness logits
 
         # Grid coordinates
         gy, gx = torch.meshgrid(torch.arange(H, device=device),
