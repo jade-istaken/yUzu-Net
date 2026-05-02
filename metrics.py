@@ -166,61 +166,81 @@ def det_metrics(preds, targets, img_size=512, strides=None,
 
     return {'mAP@50': float(ap), 'precision': float(precision), 'recall': float(recall), 'F1' : float(f1)}
 
-
 def object_count_metrics(det_preds, gt_boxes, conf_thresh=0.21, nms_iou_thresh=0.5):
     """
-    Calculates RMSE and MAE for the number of predicted objects vs. ground truth objects
+    Calculates RMSE and MAE for the number of predicted objects vs. ground truth objects,
+    applying NMS to predicted objects.
+
     Args:
         det_preds (list): List of detection predictions (e.g., [p3, p4, p5]),
-                          where each p is a tensor of shape (B, num_anchors, 5+num_classes).
-                          The 5 elements are (x, y, w, h, confidence).
+                          where each p is a tensor of shape (B, C, H, W).
+                          C is total channels from all anchors at a location.
         gt_boxes (list): List of ground truth boxes per image in the batch.
                          Each element is a tensor of shape (N, 5) where 5 is (class_id, x, y, w, h).
         conf_thresh (float): Confidence threshold for filtering predicted objects.
         nms_iou_thresh (float): IoU threshold for Non-Maximum Suppression.
+
     Returns:
-        dict: Dictionary containing 'rmse_count' and 'mae_count'.
+        dict: Dictionary containing 'MAE' and 'RMSE'.
     """
     predicted_counts = []
     ground_truth_counts = []
 
-    for i in range(len(gt_boxes)):  # Iterate over images in the batch
-        # Ground Truth Count
+    batch_size = det_preds[0].shape[0]
+
+    # Each detection is assumed to have 6 features: (x, y, w, h, confidence, class_score)
+    features_per_detection = 6
+
+    for i in range(batch_size): # Iterate over images in the batch
         ground_truth_counts.append(len(gt_boxes[i]))
+        image_decoded_preds = []
+        for p_scale in det_preds: # p_scale is (B, C, H, W)
+            # Take predictions for current image, permute to (H, W, C), and flatten to (H*W, C)
+            preds_i = p_scale[i].permute(1, 2, 0).reshape(-1, p_scale.shape[1]) # Shape: (H*W, C)
 
-        # Predicted Count
-        batch_det_preds = [p_scale[i] for p_scale in det_preds]  # Predictions for the current image across scales
+            C_channels = p_scale.shape[1]
+            # Reshape from (H*W, C_channels) to (H*W * num_anchors_per_location, features_per_detection)
+            if C_channels % features_per_detection != 0:
+                print(f"Warning: Unexpected number of channels {C_channels} for detection head. Expected multiple of {features_per_detection}.")
+                # Fallback to a single detection if unsure, or raise error.
+                if C_channels == features_per_detection:
+                    preds_i_reshaped = preds_i # Already in correct shape (H*W, 6)
+                else:
+                    raise ValueError(f"Detection head output channels {C_channels} not a multiple of {features_per_detection}.")
+            else:
+                preds_i_reshaped = preds_i.reshape(-1, features_per_detection)
 
-        # Concatenate predictions from all scales for the current image
-        all_det_preds_for_image = torch.cat(batch_det_preds, dim=0)  # Shape: (Total_anchors, 5+num_classes)
+            image_decoded_preds.append(preds_i_reshaped)
+
+        # Concatenate all decoded predictions for the current image across all scales
+        all_decoded_preds_for_image = torch.cat(image_decoded_preds, dim=0) # Shape: (Total_predictions, features_per_detection)
 
         # Filter by confidence
-        confidences = all_det_preds_for_image[:, 4].sigmoid()
-        high_conf_preds = all_det_preds_for_image[confidences > conf_thresh]
+        confidences = all_decoded_preds_for_image[:, 4].sigmoid()
+        high_conf_preds_indices = (confidences > conf_thresh).nonzero(as_tuple=True)[0]
 
-        if high_conf_preds.numel() == 0:
+        if high_conf_preds_indices.numel() == 0:
             predicted_counts.append(0)
             continue
 
+        high_conf_preds = all_decoded_preds_for_image[high_conf_preds_indices]
+
         # Apply NMS
-        # high_conf_preds are (x, y, w, h, conf, class_probs...)
-        # Convert (cx, cy, w, h) to (x1, y1, x2, y2) for NMS
         boxes_xywh = high_conf_preds[:, :4]
         boxes_x1y1x2y2 = torch.empty_like(boxes_xywh)
-        boxes_x1y1x2y2[:, 0] = boxes_xywh[:, 0] - boxes_xywh[:, 2] / 2  # x1
-        boxes_x1y1x2y2[:, 1] = boxes_xywh[:, 1] - boxes_xywh[:, 3] / 2  # y1
-        boxes_x1y1x2y2[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2] / 2  # x2
-        boxes_x1y1x2y2[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3] / 2  # y2
+        boxes_x1y1x2y2[:, 0] = boxes_xywh[:, 0] - boxes_xywh[:, 2] / 2 # x1
+        boxes_x1y1x2y2[:, 1] = boxes_xywh[:, 1] - boxes_xywh[:, 3] / 2 # y1
+        boxes_x1y1x2y2[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2] / 2 # x2
+        boxes_x1y1x2y2[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3] / 2 # y2
 
-        scores = confidences[confidences > conf_thresh]  # Confidences corresponding to high_conf_preds
+        scores = confidences[high_conf_preds_indices] # Use scores corresponding to high_conf_preds
 
-        #apply nms to figure out what boxes to actually keep as part of the count
         keep_indices = ops.nms(boxes_x1y1x2y2, scores, nms_iou_thresh)
 
         predicted_counts.append(len(keep_indices))
 
     if not predicted_counts or len(ground_truth_counts) == 0:
-        return {'rmse_count': 0.0, 'mae_count': 0.0}
+        return {'MAE': 0.0, 'RMSE': 0.0}
 
     predicted_counts_np = np.array(predicted_counts)
     ground_truth_counts_np = np.array(ground_truth_counts)
@@ -228,4 +248,4 @@ def object_count_metrics(det_preds, gt_boxes, conf_thresh=0.21, nms_iou_thresh=0
     rmse = np.sqrt(mean_squared_error(ground_truth_counts_np, predicted_counts_np))
     mae = mean_absolute_error(ground_truth_counts_np, predicted_counts_np)
 
-    return {'rmse_count': rmse, 'mae_count': mae}
+    return {'MAE': mae, 'RMSE': rmse}
