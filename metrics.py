@@ -137,7 +137,7 @@ def det_metrics(preds, targets, img_size=512, strides=None,
 
     # Compute Precision, Recall, and mAP@50
     if gt_count == 0:
-        return {'mAP@50': 0.0, 'precision': 0.0, 'recall': 0.0}
+        return {'mAP@50': 0.0, 'precision': 0.0, 'recall': 0.0, 'F1': 0.0, 'accuracy': 0.0}
 
     # Sort by confidence descending
     indices = np.argsort(conf_scores)[::-1]
@@ -156,6 +156,11 @@ def det_metrics(preds, targets, img_size=512, strides=None,
     recall = rec[-1] if len(rec) > 0 else 0.0
     f1 = 2 * precision * recall / (precision + recall + 1e-6)
 
+    total_tp = np.sum(tp)
+    total_fp = np.sum(fp)
+    total_fn = gt_count - total_tp
+    accuracy = total_tp / (total_tp + total_fp + total_fn + 1e-6)
+
     # Interpolate AP@50 (standard 11-point or full curve)
     # Full curve integration (more accurate for custom models)
     prec_interp = np.maximum.accumulate(prec[::-1])[::-1]
@@ -164,7 +169,7 @@ def det_metrics(preds, targets, img_size=512, strides=None,
 
     ap = np.sum((rec_interp[1:] - rec_interp[:-1]) * prec_interp[1:])
 
-    return {'mAP@50': float(ap), 'precision': float(precision), 'recall': float(recall), 'F1' : float(f1)}
+    return {'mAP@50': float(ap), 'precision': float(precision), 'recall': float(recall), 'F1' : float(f1), 'accuract': float(accuracy)}
 
 def object_count_metrics(det_preds, gt_boxes, conf_thresh=0.21, nms_iou_thresh=0.5):
     """
