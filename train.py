@@ -16,7 +16,7 @@ class YUzuNetDataset(Dataset):
     """Create a dataset for the YUzuNet instance."""
     #expects to be given a path with 3 folders, images, masks, and labels.
     #images contains the base images. masks contains png segmentation masks. labels contains yolo-formatted bounding box labels
-    def __init__(self, path, size=512, verbose=False, training=False):
+    def __init__(self, path, size=512, verbose=False, training=False, mosaic_prob=0.5):
         self.data_folder= path
         self.image_folder = os.path.join(self.data_folder, "images")
         self.mask_folder = os.path.join(self.data_folder, "masks")
@@ -24,6 +24,7 @@ class YUzuNetDataset(Dataset):
         self.img_ids = [f for f in os.listdir(self.image_folder)
                         if os.path.isfile(os.path.join(self.image_folder, f))]
         self.size=size # this is just the size that it gets resized to. I'm leaving this a parameter, but I genuinely don't know what'd happen if it was anything other than 512. buyer beware I guess!
+        self.mosaic_prob = mosaic_prob
 
         self.mask_transforms = transforms.Compose(
             [transforms.ToTensor(),
@@ -59,13 +60,11 @@ class YUzuNetDataset(Dataset):
 
         return torch.tensor(boxes, dtype=torch.float32)
 
-    def __getitem__(self, idx):
+    def _load_single(self, idx):
         image_name: str = self.img_ids[idx]
         img_path = os.path.join(self.image_folder, image_name)
         mask_path = os.path.join(self.mask_folder, os.path.splitext(image_name)[0] + ".png")
         label_path = os.path.join(self.label_folder, os.path.splitext(image_name)[0] + ".txt")
-
-
 
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -73,9 +72,75 @@ class YUzuNetDataset(Dataset):
 
         mask = cv2.imread(mask_path, 0)
         mask = self.mask_transforms(mask)
-        mask = torch.where(mask > 0.5, 1, 0).float() # this just REALLY clamps the mask down to make sure there's no noise from the transform or anything
+        mask = torch.where(mask > 0.5, 1, 0).float()
 
-        boxes = self._load_yolo_labels(label_path)
+        boxes = self._load_yolo_labels(label_path).clone()
+        if len(boxes) > 0:
+            boxes[:, 1:5] *= self.size  # Convert to pixels for mosaic math
+
+        return img, mask, boxes
+
+    def _build_mosaic(self, idx):
+        """Stitches 4 samples into a mosaic. Coordinates are preserved, not shifted."""
+        indices = [idx] + [random.randint(0, max(0, len(self.img_ids) - 1)) for _ in range(3)]
+        imgs, masks, box_lists = [], [], []
+
+        for i_idx in indices:
+            img_i, mask_i, boxes_i = self._load_single(i_idx)
+            imgs.append(img_i)
+            masks.append(mask_i)
+            box_lists.append(boxes_i)
+
+        cut_x = int(random.uniform(0.4, 0.6) * self.size)
+        cut_y = int(random.uniform(0.4, 0.6) * self.size)
+        rem_h = self.size - cut_y
+        rem_w = self.size - cut_x
+
+        mosaic_img = torch.zeros(3, self.size, self.size)
+        mosaic_mask = torch.zeros(1, self.size, self.size)
+        final_boxes = []
+
+        # TL quadrant
+        mosaic_img[:, :cut_y, :cut_x] = imgs[0][:, :cut_y, :cut_x]
+        mosaic_mask[:, :cut_y, :cut_x] = masks[0][:, :cut_y, :cut_x]
+        b0 = box_lists[0].clone()
+        if len(b0) > 0: final_boxes.append(b0[(b0[:, 2] < cut_y) & (b0[:, 1] < cut_x)])
+
+        # TR quadrant
+        mosaic_img[:, :cut_y, cut_x:] = imgs[1][:, :cut_y, -rem_w:]
+        mosaic_mask[:, :cut_y, cut_x:] = masks[1][:, :cut_y, -rem_w:]
+        b1 = box_lists[1].clone()
+        if len(b1) > 0: final_boxes.append(b1[(b1[:, 2] < cut_y) & (b1[:, 1] >= cut_x)])
+
+        # BL quadrant
+        mosaic_img[:, cut_y:, :cut_x] = imgs[2][:, -rem_h:, :cut_x]
+        mosaic_mask[:, cut_y:, :cut_x] = masks[2][:, -rem_h:, :cut_x]
+        b2 = box_lists[2].clone()
+        if len(b2) > 0: final_boxes.append(b2[(b2[:, 2] >= cut_y) & (b2[:, 1] < cut_x)])
+
+        # BR quadrant
+        mosaic_img[:, cut_y:, cut_x:] = imgs[3][:, -rem_h:, -rem_w:]
+        mosaic_mask[:, cut_y:, cut_x:] = masks[3][:, -rem_h:, -rem_w:]
+        b3 = box_lists[3].clone()
+        if len(b3) > 0: final_boxes.append(b3[(b3[:, 2] >= cut_y) & (b3[:, 1] >= cut_x)])
+
+        # Concatenate & filter micro-boxes
+        boxes = torch.cat(final_boxes, dim=0) if final_boxes else torch.zeros(0, 5)
+        boxes = boxes[(boxes[:, 3] > 2) & (boxes[:, 4] > 2)]
+
+        # Normalize back to [0,1] for downstream augmentations
+        if len(boxes) > 0:
+            boxes[:, 1:5] /= self.size
+
+        return mosaic_img, mosaic_mask, boxes
+
+    def __getitem__(self, idx):
+        if self.training and random.random() < self.mosaic_prob:
+            img, mask, boxes = self._build_mosaic(idx)  # Already normalized
+        else:
+            img, mask, boxes = self._load_single(idx)
+            if len(boxes) > 0:
+                boxes[:, 1:5] /= self.size  # Normalize for augmentations
 
         if self.training:
             #only apply the random augmentations if we're in training.
