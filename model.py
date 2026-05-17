@@ -168,7 +168,8 @@ class YUzuNet(nn.Module):
             nn.Conv2d(in_ch, 4 + 1 + num_cls, kernel_size=1)
         )
 
-    def forward(self, x):
+    def forward(self, x, head_mask=None):
+        #accept a head mask dict for ablation studies
         if self.verbose: print(f"Input: {x.shape}")
         down_1 = self.down_convolution_1(x)
         if self.verbose: print("Encoder Path:")
@@ -227,6 +228,14 @@ class YUzuNet(nn.Module):
         if self.verbose: print(f"P4 Out: {p4_out.shape}")
         p5_out = self.det_head_p5(p5)
         if self.verbose: print(f"P5 Out: {p5_out.shape}")
+
+        if head_mask is not None:
+        if not head_mask.get('p3', True):
+            p3_out = torch.zeros_like(p3_out)
+        if not head_mask.get('p4', True):
+            p4_out = torch.zeros_like(p4_out)
+        if not head_mask.get('p5', True):
+            p5_out = torch.zeros_like(p5_out)
 
         det_outs = [p3_out, p4_out, p5_out]
 
